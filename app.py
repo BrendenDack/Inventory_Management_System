@@ -12,6 +12,7 @@ import secret_keys
 app = Flask(__name__)
 app.config['SECRET_KEY'] = secret_keys.encrypt_key
 
+# Helper function to determine if token is valid
 def require_token(f):
     @wraps(f)
     def decorated(*args, **kwargs):
