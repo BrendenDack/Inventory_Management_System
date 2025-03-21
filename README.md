@@ -11,3 +11,4 @@ pip install Flask, Flask-SQLAlchemy, mysql-connector-python;
 create a file called 'secret_keys.py' containing the following
 
 `db_password = "EXAMPLE_PASSWORD"`
+`encrypt_key = "EXAMPLE_KEY"`
