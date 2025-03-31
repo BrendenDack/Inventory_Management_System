@@ -20,6 +20,7 @@ app.config['SESSION_COOKIE_HTTPONLY'] = True  # Prevents JavaScript access to se
 app.config['SESSION_COOKIE_SECURE'] = False  # Should be True in production for HTTPS security
 
 users = {}  # Dictionary to store user credentials (username: password)
+admins = { "bingbong":"password123" } # Dictionary to store admin credentials (username: password)
 
 # Helper function to determine if token is valid
 def require_token(f):
@@ -41,14 +42,7 @@ def require_token(f):
     
     return decorated
 
-
-@app.route("/")
-def hello_world():
-    return "<p>Hello, World!</p>"
-
 #TODO: Finish User Authentication using cookies and sessions
-
-
 
 @app.route("/register", methods=["POST"])
 def register():
@@ -77,7 +71,10 @@ def login():
     username = request.json['username']
     password = request.json['password']
 
-    if users.get(username) != password:
+    if admins.get(username) == password: # Check if user is admin
+        token = jwt.encode({'username': username, 'exp': datetime.now(datetime.timezone.utc) + timedelta(minutes=30)}, app.config['SECRET_KEY'], algorithm='HS256')
+        return jsonify({'token': token}), 200
+    elif users.get(username) != password: # Check if user is in the users dictionary
         return jsonify({'error': 'Invalid username or password'}), 401
     
     session['user'] = username # Store user in session
@@ -92,3 +89,18 @@ def logout():
     response = jsonify({'message': 'Logout successful'})
     response.set_cookie('username', '', expires=0) # clear cookie
     return response, 200
+
+# Middleware to protect routes, allowing only logged-in users
+@app.before_request
+def require_login():
+    allowed_routes = ['login', 'register']  # Routes that don't require authentication
+    if request.endpoint not in allowed_routes and 'user' not in session:
+        return jsonify({'error': 'Unauthorized access. Please log in to view this resource.'}), 401
+
+# Protected route (requires valid JWT token)
+# Template for creating CRUD routes with JWT authentication Protection
+@app.route('/admin', methods=['GET'])
+@require_token
+def protected_route(current_user):
+    # The current_user is passed after token verification
+    return jsonify({'message': f'Hello, {current_user}! Welcome to the inventory management system.'})
