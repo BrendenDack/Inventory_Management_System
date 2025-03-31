@@ -1,7 +1,7 @@
 #Flask and related functions
 from flask import Flask, request, jsonify, session
 # For Token Authentication
-import jwt
+import jwt as jwt
 from datetime import datetime, timedelta
 from functools import wraps
 import re
@@ -103,4 +103,9 @@ def require_login():
 @require_token
 def protected_route(current_user):
     # The current_user is passed after token verification
-    return jsonify({'message': f'Hello, {current_user}! Welcome to the inventory management system.'})
+    return jsonify({'message': f'Hello, {current_user}! Welcome to the Admin inventory management system.'})
+
+@app.route('/user', methods=['GET'])
+def user():
+    # The current_user is passed after token verification
+    return jsonify({'message': f'Hello! Welcome to the inventory management system.'})
