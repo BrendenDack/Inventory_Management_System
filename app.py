@@ -2,7 +2,7 @@
 from flask import Flask, request, jsonify, session
 # For Token Authentication
 import jwt as jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 import re
 # Secret variables not pushed to github
@@ -13,21 +13,21 @@ import secret_keys
 app = Flask(__name__)
 # Session configuration
 app.config['SECRET_KEY'] = secret_keys.encrypt_key
-app.config['SESSION_COOKIE_NAME'] = 'inventory_management_system'  # Name of session cookie
+app.config['SESSION_COOKIE_NAME'] = 'inventory_management_session'  # Name of session cookie
 app.config['SESSION_PERMANENT'] = False  # Session will not be permanent
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)  # Session expires after 30 minutes
 app.config['SESSION_COOKIE_HTTPONLY'] = True  # Prevents JavaScript access to session cookie
 app.config['SESSION_COOKIE_SECURE'] = False  # Should be True in production for HTTPS security
 
 users = {}  # Dictionary to store user credentials (username: password)
-admins = { "bingbong":"password123" } # Dictionary to store admin credentials (username: password)
+admins = { "bingbong":"password!23" } # Dictionary to store admin credentials (username: password)
 inventory = {}
 
 # Helper function to determine if token is valid
 def require_token(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        token = request.headers.get("inventory-access-token") # Retrieve token from http header
+        token = request.cookies.get("inventory-access-token") # Retrieve token from http header
 
         if not token:
             return jsonify({"message" : "Missing Token"}), 401 # Unauthorized because no token
@@ -53,6 +53,9 @@ def register():
     username = request.json['username']
     password = request.json['password']
 
+    if username in admins:
+        return jsonify({"message" : "User already exists"}), 400
+
     if username in users:
         return jsonify({"message" : "User already exists"}), 400
     
@@ -73,8 +76,15 @@ def login():
     password = request.json['password']
 
     if admins.get(username) == password: # Check if user is admin
-        token = jwt.encode({'username': username, 'exp': datetime.now(datetime.timezone.utc) + timedelta(minutes=30)}, app.config['SECRET_KEY'], algorithm='HS256')
-        return jsonify({'token': token}), 200
+        session['user'] = username # Store user in session
+        response = jsonify({'message': 'Login successful'})
+        
+        response.set_cookie('username', username, httponly=True, max_age = 1800) # Set cookie with username
+        
+        # Set the admin access token
+        token = jwt.encode({'username': username, 'exp': datetime.now(timezone.utc) + timedelta(minutes=30)}, app.config['SECRET_KEY'], algorithm='HS256')
+        response.set_cookie('inventory-access-token', token)
+        return response, 200
     elif users.get(username) != password: # Check if user is in the users dictionary
         return jsonify({'error': 'Invalid username or password'}), 401
     
@@ -89,6 +99,7 @@ def logout():
     session.pop('user', None)
     response = jsonify({'message': 'Logout successful'})
     response.set_cookie('username', '', expires=0) # clear cookie
+    response.set_cookie('inventory-access-token', '', expires=0) # clear admin credentials when logging out
     return response, 200
 
 # Middleware to protect routes, allowing only logged-in users
