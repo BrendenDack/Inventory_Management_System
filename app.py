@@ -2,7 +2,7 @@
 from flask import Flask, request, jsonify, session
 # For Token Authentication
 import jwt as jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 import re
 # Secret variables not pushed to github
@@ -27,21 +27,25 @@ inventory = {}
 def require_token(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        token = request.headers.get("inventory-access-token") # Retrieve token from http header
+        token = request.headers.get("Authorization")  # Get token from the Authorization header
 
         if not token:
-            return jsonify({"message" : "Missing Token"}), 401 # Unauthorized because no token
+            return jsonify({"message": "Missing Token"}), 401  # Unauthorized if no token is provided
         
+        # Remove "Bearer " from the token (if present) and decode it
+        token = token.replace("Bearer ", "")
+
         try:
             # Decode given token using the secret key
             data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
-            current_user = data['username'] # Extract user info
-        except:
-            return jsonify({'message' : "Invalid Token"}), 401 # Unauthorized because bad token
+            current_user = data['username']  # Extract user info
+        except Exception as e:
+            return jsonify({'message': "Invalid Token", 'error': str(e)}), 401  # Unauthorized if the token is invalid
         
-        return f(current_user, *args, **kwargs)
+        return f(current_user, *args, **kwargs)  # Pass the current_user to the route handler
     
     return decorated
+
 
 #TODO: Finish User Authentication using cookies and sessions
 
@@ -73,8 +77,11 @@ def login():
     password = request.json['password']
 
     if admins.get(username) == password: # Check if user is admin
-        token = jwt.encode({'username': username, 'exp': datetime.now(datetime.timezone.utc) + timedelta(minutes=30)}, app.config['SECRET_KEY'], algorithm='HS256')
-        return jsonify({'token': token}), 200
+        token = jwt.encode({'username': username, 'exp': datetime.now(timezone.utc) + timedelta(minutes=30)}, app.config['SECRET_KEY'], algorithm='HS256')
+        response = jsonify({'token': token})
+        session['user'] = username
+        response.set_cookie('username', username, httponly=True, max_age=1800)
+        return response, 200
     elif users.get(username) != password: # Check if user is in the users dictionary
         return jsonify({'error': 'Invalid username or password'}), 401
     
