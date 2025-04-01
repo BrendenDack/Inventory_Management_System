@@ -5,7 +5,7 @@ Using python flask, and a virtual environment
 ```
 python -m venv venv;
 .\venv\Scripts\activate;
-pip install Flask, Flask-SQLAlchemy, mysql-connector-python, jwt, re;
+pip install Flask, Flask-SQLAlchemy, mysql-connector-python, PyJWT, re;
 ```
 
 create a file called 'secret_keys.py' containing the following
