@@ -20,7 +20,7 @@ app.config['SESSION_COOKIE_HTTPONLY'] = True  # Prevents JavaScript access to se
 app.config['SESSION_COOKIE_SECURE'] = False  # Should be True in production for HTTPS security
 
 users = {}  # Dictionary to store user credentials (username: password)
-admins = { "bingbong":"password123" } # Dictionary to store admin credentials (username: password)
+admins = { "bingbong":"password!23" } # Dictionary to store admin credentials (username: password)
 inventory = {}
 
 # Helper function to determine if token is valid
@@ -79,9 +79,9 @@ def login():
     if admins.get(username) == password: # Check if user is admin
         token = jwt.encode({'username': username, 'exp': datetime.now(timezone.utc) + timedelta(minutes=30)}, app.config['SECRET_KEY'], algorithm='HS256')
         response = jsonify({'token': token})
-        session['user'] = username
-        response.set_cookie('username', username, httponly=True, max_age=1800)
+        response.headers['Authorization'] = f"Bearer {token}"
         return response, 200
+        
     elif users.get(username) != password: # Check if user is in the users dictionary
         return jsonify({'error': 'Invalid username or password'}), 401
     
