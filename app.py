@@ -2,7 +2,7 @@
 from flask import Flask, request, jsonify, session
 # For Token Authentication
 import jwt as jwt
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, timezone
 from functools import wraps
 import re
 # Secret variables not pushed to github
@@ -13,7 +13,7 @@ import secret_keys
 app = Flask(__name__)
 # Session configuration
 app.config['SECRET_KEY'] = secret_keys.encrypt_key
-app.config['SESSION_COOKIE_NAME'] = 'inventory_management_system'  # Name of session cookie
+app.config['SESSION_COOKIE_NAME'] = 'inventory_management_session'  # Name of session cookie
 app.config['SESSION_PERMANENT'] = False  # Session will not be permanent
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)  # Session expires after 30 minutes
 app.config['SESSION_COOKIE_HTTPONLY'] = True  # Prevents JavaScript access to session cookie
@@ -57,6 +57,9 @@ def register():
     username = request.json['username']
     password = request.json['password']
 
+    if username in admins:
+        return jsonify({"message" : "User already exists"}), 400
+
     if username in users:
         return jsonify({"message" : "User already exists"}), 400
     
@@ -96,6 +99,7 @@ def logout():
     session.pop('user', None)
     response = jsonify({'message': 'Logout successful'})
     response.set_cookie('username', '', expires=0) # clear cookie
+    response.set_cookie('inventory-access-token', '', expires=0) # clear admin credentials when logging out
     return response, 200
 
 # Middleware to protect routes, allowing only logged-in users
