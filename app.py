@@ -2,7 +2,7 @@
 from flask import Flask, request, jsonify, session
 # For Token Authentication
 import jwt as jwt
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, timezone
 from functools import wraps
 import re
 # Secret variables not pushed to github
@@ -27,11 +27,14 @@ inventory = {}
 def require_token(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        token = request.cookies.get("inventory-access-token") # Retrieve token from http header
+        token = request.headers.get("Authorization")  # Get token from the Authorization header
 
         if not token:
-            return jsonify({"message" : "Missing Token"}), 401 # Unauthorized because no token
+            return jsonify({"message": "Missing Token"}), 401  # Unauthorized if no token is provided
         
+        # Remove "Bearer " from the token (if present) and decode it
+        token = token.replace("Bearer ", "")
+
         try:
             # Decode given token using the secret key
             data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
@@ -40,8 +43,8 @@ def require_token(f):
             return jsonify({'message' : "Invalid Token"}), 401 # Unauthorized because bad token
         
         return f(*args, **kwargs)
-    
     return decorated
+
 
 #TODO: Finish User Authentication using cookies and sessions
 
@@ -76,15 +79,11 @@ def login():
     password = request.json['password']
 
     if admins.get(username) == password: # Check if user is admin
-        session['user'] = username # Store user in session
-        response = jsonify({'message': 'Login successful'})
-        
-        response.set_cookie('username', username, httponly=True, max_age = 1800) # Set cookie with username
-        
-        # Set the admin access token
         token = jwt.encode({'username': username, 'exp': datetime.now(timezone.utc) + timedelta(minutes=30)}, app.config['SECRET_KEY'], algorithm='HS256')
-        response.set_cookie('inventory-access-token', token)
+        response = jsonify({'token': token})
+        response.headers['Authorization'] = f"Bearer {token}"
         return response, 200
+        
     elif users.get(username) != password: # Check if user is in the users dictionary
         return jsonify({'error': 'Invalid username or password'}), 401
     
