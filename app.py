@@ -27,18 +27,15 @@ inventory = {}
 def require_token(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        token = request.headers.get("Authorization")  # Get token from the Authorization header
-
+        
+        token = request.cookies.get("inventory-access-token")
         if not token:
             return jsonify({"message": "Missing Token"}), 401  # Unauthorized if no token is provided
-        
-        # Remove "Bearer " from the token (if present) and decode it
-        token = token.replace("Bearer ", "")
 
         try:
             # Decode given token using the secret key
             data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
-            #current_user = data['username'] # Extract user info
+            session['user'] = data['username'] # Extract user info
         except:
             return jsonify({'message' : "Invalid Token"}), 401 # Unauthorized because bad token
         
@@ -81,8 +78,10 @@ def login():
 
     if admins.get(username) == password: # Check if user is admin
         token = jwt.encode({'username': username, 'exp': datetime.now(timezone.utc) + timedelta(minutes=30)}, app.config['SECRET_KEY'], algorithm='HS256')
-        response = jsonify({'token': token})
-        response.headers['Authorization'] = f"Bearer {token}"
+        
+        response = jsonify({'message': 'Login successful', 'token': token})
+        response.set_cookie('inventory-access-token', token, httponly=True, max_age=1800)
+        session['user'] = username
         return response, 200
         
     elif users.get(username) != password: # Check if user is in the users dictionary
