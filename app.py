@@ -119,7 +119,7 @@ def protected_route():
 @app.route('/user', methods=['GET'])
 def user():
     # The current_user is passed after token verification
-    return jsonify({'message': f'Hello! Welcome to the inventory management system.'})
+    return jsonify({'message': f'Hello, {session['user']}! Welcome to the inventory management system.'})
 
 # Helper function to generate unique item IDs for each user's inventory
 def generate_item_id():
@@ -156,6 +156,11 @@ def create_items():
         return jsonify({'error': 'Quantity must be a non-negative integer'}), 400
     if not isinstance(item_data['price'], (int, float)) or item_data['price'] < 0:
         return jsonify({'error': 'Price must be a non-negative number'}), 400
+    
+    # Check if both quantity and price are negative
+    if (isinstance(item_data['quantity'], (int, float)) and item_data['quantity'] < 0 and
+        isinstance(item_data['price'], (int, float)) and item_data['price'] < 0):
+        return jsonify({'error': 'Both quantity and price cannot be negative'}), 400
     
     # Check if item already exist in user's inventory
     for existing_item_id, existing_item in inventory.items():
@@ -220,6 +225,11 @@ def update_item(item_id):
     if not isinstance(item['price'], (int, float)) or item['price'] < 0:
         return jsonify({'error': 'Price must be a non-negative number'}), 400
     
+    # Check if both quantity and price are negative
+    if (isinstance(item['quantity'], (int, float)) and item['quantity'] < 0 and
+        isinstance(item['price'], (int, float)) and item['price'] < 0):
+        return jsonify({'error': 'Both quantity and price cannot be negative'}), 400
+
     # Check for duplicate names after update item
     for existing_item_id, existing_item in inventory.items():
         if existing_item_id != item_id and existing_item['name'] == new_name:
