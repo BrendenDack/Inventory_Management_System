@@ -209,16 +209,6 @@ def update_item(item_id):
     if not request.json:
         return jsonify({'error': 'No data provided'}), 400
     
-    # Update supermarket fields with new data or keep existing data
-    item = inventory[item_id]
-    new_name = request.json.get('name', item['name'])
-    item['name'] = new_name
-    item['description'] = request.json.get('description', item['description'])
-    item['quantity'] = request.json.get('quantity', item['quantity'])
-    item['price'] = request.json.get('price', item['price'])
-    item['department'] = request.json.get('department', item['department'])
-    item['location'] = request.json.get('location', item['location'])
-    
     # Validate updated quantity and price
     if not isinstance(item['quantity'], int) or item['quantity'] < 0:
         return jsonify({'error': 'Quantity must be a non-negative integer'}), 400
@@ -234,6 +224,16 @@ def update_item(item_id):
     for existing_item_id, existing_item in inventory.items():
         if existing_item_id != item_id and existing_item['name'] == new_name:
             return jsonify({'error': f"Item '{new_name}' already exists in your inventory", 'item_id': existing_item_id}), 409
+
+    # Update supermarket fields with new data or keep existing data
+    item = inventory[item_id]
+    new_name = request.json.get('name', item['name'])
+    item['name'] = new_name
+    item['description'] = request.json.get('description', item['description'])
+    item['quantity'] = request.json.get('quantity', item['quantity'])
+    item['price'] = request.json.get('price', item['price'])
+    item['department'] = request.json.get('department', item['department'])
+    item['location'] = request.json.get('location', item['location'])
     
     return jsonify({'message': 'Item updated successfully'}), 200
 
