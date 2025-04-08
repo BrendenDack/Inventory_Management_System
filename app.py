@@ -79,7 +79,7 @@ def login():
     if admins.get(username) == password: # Check if user is admin
         token = jwt.encode({'username': username, 'exp': datetime.now(timezone.utc) + timedelta(minutes=30)}, app.config['SECRET_KEY'], algorithm='HS256')
         
-        response = jsonify({'message': 'Login successful', 'token': token})
+        response = jsonify({'message': 'Admin Login successful', 'token': token})
         response.set_cookie('inventory-access-token', token, httponly=True, max_age=1800)
         session['user'] = username
         return response, 200
@@ -127,7 +127,7 @@ def generate_item_id():
     item_ids = inventory.keys()
     return max(item_ids, default=0) + 1
 
-# Route to create (POST) inventory item (user)
+# Route to create (POST) inventory item (Admin Only)
 @app.route('/items', methods=['POST'])
 @require_token
 def create_items():
@@ -174,7 +174,7 @@ def create_items():
     
     return jsonify({'message': 'Item created successfully', 'item_id': item_id}), 201
 
-# Route to read (GET) all inventory items
+# Route to read (GET) all inventory items 
 @app.route("/items", methods=["GET"])
 def get_items():
     if 'user' not in session:
@@ -237,7 +237,7 @@ def update_item(item_id):
     
     return jsonify({'message': 'Item updated successfully'}), 200
 
-# Route to delete inventory item by ID (user)
+# Route to delete inventory item by ID (Admin Only)
 @app.route("/items/<int:item_id>", methods=["DELETE"])
 @require_token
 def delete_item(item_id):
