@@ -48,6 +48,9 @@ def register():
     if not request.json or not 'username' in request.json or not 'password' in request.json:
         return jsonify({"message" : "Missing username or password"}), 400
     
+    if not isinstance(request.json['username'], str) or not isinstance(request.json['password'], str):
+        return jsonify({"message" : "Username and password must be strings"}), 400
+
     username = request.json['username']
     password = request.json['password']
 
@@ -70,6 +73,9 @@ def login():
     if not request.json or 'username' not in request.json or 'password' not in request.json:
         return jsonify({'error': 'Username and password are required'}), 400
     
+    if not isinstance(request.json['username'], str) or not isinstance(request.json['password'], str):
+        return jsonify({"message" : "Username and password must be strings"}), 400
+
     username = request.json['username']
     password = request.json['password']
 
