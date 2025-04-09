@@ -59,6 +59,9 @@ def register():
     if not request.json or not 'username' in request.json or not 'password' in request.json:
         return jsonify({"message" : "Missing username or password"}), 400
     
+    if not isinstance(request.json['username'], str) or not isinstance(request.json['password'], str):
+        return jsonify({"message" : "Username and password must be strings"}), 400
+
     username = request.json['username']
     password = request.json['password']
     email = request.json.get('email', '')
@@ -87,6 +90,9 @@ def login():
     if not request.json or 'username' not in request.json or 'password' not in request.json:
         return jsonify({'error': 'Username and password are required'}), 400
     
+    if not isinstance(request.json['username'], str) or not isinstance(request.json['password'], str):
+        return jsonify({"message" : "Username and password must be strings"}), 400
+
     username = request.json['username']
     password = request.json['password']
 
@@ -165,6 +171,16 @@ def create_items():
         'location': request.json['location'],
     }
     
+    # Validate the item name, description, department, and location
+    if not isinstance(item_data['name'], str):
+        return jsonify({'error': 'Item name must be a string'}), 400
+    if not isinstance(item_data['description'], str):
+        return jsonify({'error': 'Item description must be a string'}), 400
+    if not isinstance(item_data['department'], str):
+        return jsonify({'error': 'Item department must be a string'}), 400
+    if not isinstance(item_data['location'], str):
+        return jsonify({'error': 'Item location must be a string'}), 400
+
     # Validate the quantity and price
     if not isinstance(item_data['quantity'], int) or item_data['quantity'] < 0:
         return jsonify({'error': 'Quantity must be a non-negative integer'}), 400
@@ -174,7 +190,8 @@ def create_items():
     # Check if item already exist in user's inventory
     for existing_item_id, existing_item in user_inventory.items():
         if existing_item['name'] == item_data['name']:
-            return jsonify({'error': f"Item '{item_data['name']}' already exists in your inventory", 'item_id': existing_item_id}), 409
+            return jsonify({'error': f"Item '{item_data['name']}' already exists in your inventory", 
+                            'item_id': existing_item_id}), 409
     
     # Generate item ID and store the item
     # Add new item to inventory
