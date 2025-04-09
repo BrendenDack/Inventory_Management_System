@@ -79,7 +79,7 @@ def login():
     if admins.get(username) == password: # Check if user is admin
         token = jwt.encode({'username': username, 'exp': datetime.now(timezone.utc) + timedelta(minutes=30)}, app.config['SECRET_KEY'], algorithm='HS256')
         
-        response = jsonify({'message': 'Login successful', 'token': token})
+        response = jsonify({'message': 'Admin Login successful', 'token': token})
         response.set_cookie('inventory-access-token', token, httponly=True, max_age=1800)
         session['user'] = username
         return response, 200
@@ -127,7 +127,7 @@ def generate_item_id():
     item_ids = inventory.keys()
     return max(item_ids, default=0) + 1
 
-# Route to create (POST) inventory item (user)
+# Route to create (POST) inventory item (Admin Only)
 @app.route('/items', methods=['POST'])
 @require_token
 def create_items():
@@ -157,11 +157,6 @@ def create_items():
     if not isinstance(item_data['price'], (int, float)) or item_data['price'] < 0:
         return jsonify({'error': 'Price must be a non-negative number'}), 400
     
-    # Check if both quantity and price are negative
-    if (isinstance(item_data['quantity'], (int, float)) and item_data['quantity'] < 0 and
-        isinstance(item_data['price'], (int, float)) and item_data['price'] < 0):
-        return jsonify({'error': 'Both quantity and price cannot be negative'}), 400
-    
     # Check if item already exist in user's inventory
     for existing_item_id, existing_item in inventory.items():
         if existing_item['name'] == item_data['name']:
@@ -174,7 +169,7 @@ def create_items():
     
     return jsonify({'message': 'Item created successfully', 'item_id': item_id}), 201
 
-# Route to read (GET) all inventory items
+# Route to read (GET) all inventory items 
 @app.route("/items", methods=["GET"])
 def get_items():
     if 'user' not in session:
@@ -209,6 +204,17 @@ def update_item(item_id):
     if not request.json:
         return jsonify({'error': 'No data provided'}), 400
     
+    # Validate updated quantity and price
+    if not isinstance(item['quantity'], int) or item['quantity'] < 0:
+        return jsonify({'error': 'Quantity must be a non-negative integer'}), 400
+    if not isinstance(item['price'], (int, float)) or item['price'] < 0:
+        return jsonify({'error': 'Price must be a non-negative number'}), 400
+
+    # Check for duplicate names after update item
+    for existing_item_id, existing_item in inventory.items():
+        if existing_item_id != item_id and existing_item['name'] == new_name:
+            return jsonify({'error': f"Item '{new_name}' already exists in your inventory", 'item_id': existing_item_id}), 409
+
     # Update supermarket fields with new data or keep existing data
     item = inventory[item_id]
     new_name = request.json.get('name', item['name'])
@@ -219,25 +225,9 @@ def update_item(item_id):
     item['department'] = request.json.get('department', item['department'])
     item['location'] = request.json.get('location', item['location'])
     
-    # Validate updated quantity and price
-    if not isinstance(item['quantity'], int) or item['quantity'] < 0:
-        return jsonify({'error': 'Quantity must be a non-negative integer'}), 400
-    if not isinstance(item['price'], (int, float)) or item['price'] < 0:
-        return jsonify({'error': 'Price must be a non-negative number'}), 400
-    
-    # Check if both quantity and price are negative
-    if (isinstance(item['quantity'], (int, float)) and item['quantity'] < 0 and
-        isinstance(item['price'], (int, float)) and item['price'] < 0):
-        return jsonify({'error': 'Both quantity and price cannot be negative'}), 400
-
-    # Check for duplicate names after update item
-    for existing_item_id, existing_item in inventory.items():
-        if existing_item_id != item_id and existing_item['name'] == new_name:
-            return jsonify({'error': f"Item '{new_name}' already exists in your inventory", 'item_id': existing_item_id}), 409
-    
     return jsonify({'message': 'Item updated successfully'}), 200
 
-# Route to delete inventory item by ID (user)
+# Route to delete inventory item by ID (Admin Only)
 @app.route("/items/<int:item_id>", methods=["DELETE"])
 @require_token
 def delete_item(item_id):
