@@ -154,6 +154,16 @@ def create_items():
         'location': request.json['location'],
     }
     
+    # Validate the item name, description, department, and location
+    if not isinstance(item_data['name'], str):
+        return jsonify({'error': 'Item name must be a string'}), 400
+    if not isinstance(item_data['description'], str):
+        return jsonify({'error': 'Item description must be a string'}), 400
+    if not isinstance(item_data['department'], str):
+        return jsonify({'error': 'Item department must be a string'}), 400
+    if not isinstance(item_data['location'], str):
+        return jsonify({'error': 'Item location must be a string'}), 400
+
     # Validate the quantity and price
     if not isinstance(item_data['quantity'], int) or item_data['quantity'] < 0:
         return jsonify({'error': 'Quantity must be a non-negative integer'}), 400
