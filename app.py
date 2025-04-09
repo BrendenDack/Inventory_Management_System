@@ -19,8 +19,8 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)  # Session expi
 app.config['SESSION_COOKIE_HTTPONLY'] = True  # Prevents JavaScript access to session cookie
 app.config['SESSION_COOKIE_SECURE'] = False  # Should be True in production for HTTPS security
 
-users = {}  # Dictionary to store user credentials (username: password)
-admins = { "bingbong":"password!23" } # Dictionary to store admin credentials (username: password)
+users = {}  # Dictionary to store user credentials (username : password)
+admins = { "bingbong":"password!23" } # Dictionary to store admin credentials (username : password)
 inventory = {}
 
 # Helper function to determine if token is valid
@@ -43,14 +43,14 @@ def require_token(f):
     
     return decorated
 
-
-#TODO: Finish User Authentication using cookies and sessions
-
 @app.route("/register", methods=["POST"])
 def register():
     if not request.json or not 'username' in request.json or not 'password' in request.json:
         return jsonify({"message" : "Missing username or password"}), 400
     
+    if not isinstance(request.json['username'], str) or not isinstance(request.json['password'], str):
+        return jsonify({"message" : "Username and password must be strings"}), 400
+
     username = request.json['username']
     password = request.json['password']
 
@@ -73,6 +73,9 @@ def login():
     if not request.json or 'username' not in request.json or 'password' not in request.json:
         return jsonify({'error': 'Username and password are required'}), 400
     
+    if not isinstance(request.json['username'], str) or not isinstance(request.json['password'], str):
+        return jsonify({"message" : "Username and password must be strings"}), 400
+
     username = request.json['username']
     password = request.json['password']
 
@@ -160,7 +163,8 @@ def create_items():
     # Check if item already exist in user's inventory
     for existing_item_id, existing_item in inventory.items():
         if existing_item['name'] == item_data['name']:
-            return jsonify({'error': f"Item '{item_data['name']}' already exists in your inventory", 'item_id': existing_item_id}), 409
+            return jsonify({'error': f"Item '{item_data['name']}' already exists in your inventory", 
+                            'item_id': existing_item_id}), 409
     
     # Generate item ID and store the item
     # If the item is not exist -> Add new item to inventory
