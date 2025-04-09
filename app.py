@@ -10,8 +10,6 @@ from werkzeug.security import generate_password_hash, check_password_hash
 # Secret variables not pushed to github
 import secret_keys
 
-# secret_keys.db_password
-
 app = Flask(__name__)
 # Session configuration
 app.config['SECRET_KEY'] = secret_keys.encrypt_key
