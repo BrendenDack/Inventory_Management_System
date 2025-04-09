@@ -10,8 +10,6 @@ from werkzeug.security import generate_password_hash, check_password_hash
 # Secret variables not pushed to github
 import secret_keys
 
-# secret_keys.db_password
-
 app = Flask(__name__)
 # Session configuration
 app.config['SECRET_KEY'] = secret_keys.encrypt_key
@@ -142,8 +140,8 @@ def user():
     return jsonify({'message': f"Hello, {session['user']}! Welcome to the Admin inventory management system."})
 
 # Helper function to generate unique item IDs for each user's inventory
-def generate_item_id(user_inventory):
-    return max(user_inventory.keys(), default=0) + 1
+def generate_item_id():
+    return max(inventory.keys(), default=0) + 1
 
 # Route to create (POST) inventory item (Admin Only)
 @app.route('/items', methods=['POST'])
@@ -154,7 +152,6 @@ def create_items():
         return jsonify({'error': 'Unauthorized access. Please login.'}), 401
     
     username = session['user']
-    user_inventory = inventory.setdefault(username, {})
     
     # Validate required fields in JSON request
     required_fields = ['name', 'description', 'quantity', 'price', 'department', 'location']
@@ -188,15 +185,15 @@ def create_items():
         return jsonify({'error': 'Price must be a non-negative number'}), 400
     
     # Check if item already exist in user's inventory
-    for existing_item_id, existing_item in user_inventory.items():
+    for existing_item_id, existing_item in inventory.items():
         if existing_item['name'] == item_data['name']:
             return jsonify({'error': f"Item '{item_data['name']}' already exists in your inventory", 
                             'item_id': existing_item_id}), 409
     
     # Generate item ID and store the item
     # Add new item to inventory
-    item_id = generate_item_id(user_inventory)
-    user_inventory[item_id] = item_data
+    item_id = generate_item_id()
+    inventory[item_id] = item_data
     
     return jsonify({'message': 'Item created successfully', 'item_id': item_id}), 201
 
@@ -207,8 +204,7 @@ def get_items():
         return jsonify({'error': 'Unauthorized access. Please log in.'}), 401
     
     username = session['user']
-    user_inventory = inventory.get(username, {})
-    return jsonify(user_inventory), 200
+    return jsonify(inventory), 200
 
 # Route to read (GET) single inventory item by ID (user)
 @app.route("/items/<int:item_id>", methods=["GET"])
@@ -217,8 +213,7 @@ def get_item(item_id):
         return jsonify({'error': 'Unauthorized access. Please log in.'}), 401
     
     username = session['user']
-    user_inventory = inventory.get(username, {})
-    item = user_inventory.get(item_id)
+    item = inventory.get(item_id)
     if not item:
         return jsonify({'error': 'Item not found'}), 404
     
@@ -231,11 +226,10 @@ def update_item(item_id):
         return jsonify({'error': 'Unauthorized access. Please login.'}), 401
     
     username = session['user']
-    user_inventory = inventory.get(username, {})
-    if item_id not in user_inventory:
+    if item_id not in inventory:
         return jsonify({'error': 'Item not found'}), 404
     
-    item = user_inventory[item_id]
+    item = inventory[item_id]
     if not request.json:
         return jsonify({'error': 'No data provided'}), 400
     
@@ -250,12 +244,12 @@ def update_item(item_id):
 
     # Check for duplicate names after update item
     new_name = request.json.get('name', item['name'])
-    for existing_item_id, existing_item in user_inventory.items():
+    for existing_item_id, existing_item in inventory.items():
         if existing_item_id != item_id and existing_item['name'] == new_name:
             return jsonify({'error': f"Item '{new_name}' already exists in your inventory", 'item_id': existing_item_id}), 409
 
     # Update supermarket fields with new data or keep existing data
-    item = user_inventory[item_id]
+    item = inventory[item_id]
     item['name'] = new_name
     item['description'] = request.json.get('description', item['description'])
     item['quantity'] = new_quantity
@@ -274,9 +268,8 @@ def delete_item(item_id):
         return jsonify({'error': 'Unauthorized access. Please log in.'}), 401
     
     username = session['user']
-    user_inventory = inventory.get(username, {})
-    if item_id not in user_inventory:
+    if item_id not in inventory:
         return jsonify({'error': 'Item not found'}), 404
     
-    del user_inventory[item_id]
+    del inventory[item_id]
     return jsonify({'message': 'Item deleted successfully'}), 200
