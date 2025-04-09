@@ -2,9 +2,11 @@
 from flask import Flask, request, jsonify, session
 # For Token Authentication
 import jwt as jwt
-from datetime import datetime, timedelta, timezone, timezone
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 import re
+# For password hashing
+from werkzeug.security import generate_password_hash, check_password_hash
 # Secret variables not pushed to github
 import secret_keys
 
@@ -21,7 +23,7 @@ app.config['SESSION_COOKIE_SECURE'] = False  # Should be True in production for 
 
 users = {}  # Dictionary to store user credentials (username: password)
 admins = { "bingbong":"password!23" } # Dictionary to store admin credentials (username: password)
-inventory = {}
+inventory = {} # Stores inventory per user: {username: {item_id: item_data}}
 
 # Helper function to determine if token is valid
 def require_token(f):
@@ -43,8 +45,14 @@ def require_token(f):
     
     return decorated
 
-
-#TODO: Finish User Authentication using cookies and sessions
+# Middleware to restrict access to admins only
+def require_admin(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user' not in session or session['user'] not in admins:
+            return jsonify({'error': 'Admins only'}), 403
+        return f(*args, **kwargs)
+    return decorated_function
 
 @app.route("/register", methods=["POST"])
 def register():
@@ -53,6 +61,7 @@ def register():
     
     username = request.json['username']
     password = request.json['password']
+    email = request.json.get('email', '')
 
     if username in admins:
         return jsonify({"message" : "User already exists"}), 400
@@ -63,10 +72,15 @@ def register():
     if len(password) < 8 or not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
         return jsonify({"message" : "Password must be at least 8 characters long and contain at least one special character"}), 400
     
+    if not email or not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+        return jsonify({"message": "Valid email is required"}), 400
+    
     # Store user credentials in the dictionary
-    users[username] = password
-    return jsonify({"message" : "User registered successfully"}), 201
+    hashed_pw = generate_password_hash(password)
+    users[username] = {'password': hashed_pw, 'email': email}
+    return jsonify({"message": "User registered successfully"}), 201
 
+# Login
 @app.route("/login", methods=["POST"])
 def login():
     
@@ -84,7 +98,7 @@ def login():
         session['user'] = username
         return response, 200
         
-    elif users.get(username) != password: # Check if user is in the users dictionary
+    elif username not in users or not check_password_hash(users[username]['password'], password):
         return jsonify({'error': 'Invalid username or password'}), 401
     
     session['user'] = username # Store user in session
@@ -92,7 +106,7 @@ def login():
     response.set_cookie('username', username, httponly=True, max_age = 1800) # Set cookie with username
     return response, 200
 
-
+# Logout 
 @app.route("/logout", methods=["POST"])
 def logout():
     session.pop('user', None)
@@ -114,31 +128,31 @@ def require_login():
 @require_token
 def protected_route():
     # The current_user is passed after token verification
-    return jsonify({'message': f'Hello, {session['user']}! Welcome to the Admin inventory management system.'})
+    return jsonify({'message': f"Hello, {session['user']}! Welcome to the Admin inventory management system."})
 
 @app.route('/user', methods=['GET'])
 def user():
     # The current_user is passed after token verification
-    return jsonify({'message': f'Hello, {session['user']}! Welcome to the inventory management system.'})
+    return jsonify({'message': f"Hello, {session['user']}! Welcome to the Admin inventory management system."})
 
 # Helper function to generate unique item IDs for each user's inventory
-def generate_item_id():
-    # Find the next available ID (starting from 1)
-    item_ids = inventory.keys()
-    return max(item_ids, default=0) + 1
+def generate_item_id(user_inventory):
+    return max(user_inventory.keys(), default=0) + 1
 
 # Route to create (POST) inventory item (Admin Only)
 @app.route('/items', methods=['POST'])
 @require_token
+@require_admin
 def create_items():
     if 'user' not in session:
         return jsonify({'error': 'Unauthorized access. Please login.'}), 401
     
     username = session['user']
+    user_inventory = inventory.setdefault(username, {})
     
     # Validate required fields in JSON request
     required_fields = ['name', 'description', 'quantity', 'price', 'department', 'location']
-    if not request.json or not all(key in request.json for key in required_fields):
+    if not request.json or not all(field in request.json for field in required_fields):
         return jsonify({'error:': 'Missing required fields'}), 400
     
     # Extract the item data 
@@ -158,14 +172,14 @@ def create_items():
         return jsonify({'error': 'Price must be a non-negative number'}), 400
     
     # Check if item already exist in user's inventory
-    for existing_item_id, existing_item in inventory.items():
+    for existing_item_id, existing_item in user_inventory.items():
         if existing_item['name'] == item_data['name']:
             return jsonify({'error': f"Item '{item_data['name']}' already exists in your inventory", 'item_id': existing_item_id}), 409
     
     # Generate item ID and store the item
-    # If the item is not exist -> Add new item to inventory
-    item_id = generate_item_id()
-    inventory[item_id] = item_data
+    # Add new item to inventory
+    item_id = generate_item_id(user_inventory)
+    user_inventory[item_id] = item_data
     
     return jsonify({'message': 'Item created successfully', 'item_id': item_id}), 201
 
@@ -176,7 +190,8 @@ def get_items():
         return jsonify({'error': 'Unauthorized access. Please log in.'}), 401
     
     username = session['user']
-    return jsonify(inventory), 200
+    user_inventory = inventory.get(username, {})
+    return jsonify(user_inventory), 200
 
 # Route to read (GET) single inventory item by ID (user)
 @app.route("/items/<int:item_id>", methods=["GET"])
@@ -185,7 +200,8 @@ def get_item(item_id):
         return jsonify({'error': 'Unauthorized access. Please log in.'}), 401
     
     username = session['user']
-    item = inventory.get(item_id)
+    user_inventory = inventory.get(username, {})
+    item = user_inventory.get(item_id)
     if not item:
         return jsonify({'error': 'Item not found'}), 404
     
@@ -198,30 +214,35 @@ def update_item(item_id):
         return jsonify({'error': 'Unauthorized access. Please login.'}), 401
     
     username = session['user']
-    if item_id not in inventory:
+    user_inventory = inventory.get(username, {})
+    if item_id not in user_inventory:
         return jsonify({'error': 'Item not found'}), 404
     
+    item = user_inventory[item_id]
     if not request.json:
         return jsonify({'error': 'No data provided'}), 400
     
     # Validate updated quantity and price
-    if not isinstance(item['quantity'], int) or item['quantity'] < 0:
-        return jsonify({'error': 'Quantity must be a non-negative integer'}), 400
-    if not isinstance(item['price'], (int, float)) or item['price'] < 0:
-        return jsonify({'error': 'Price must be a non-negative number'}), 400
+    new_quantity = request.json.get('quantity', item['quantity'])
+    new_price = request.json.get('price', item['price'])
+
+    if not isinstance(new_quantity, int) or new_quantity < 0:
+       return jsonify({'error': 'Quantity must be a non-negative integer'}), 400
+    if not isinstance(new_price, (int, float)) or new_price < 0:
+       return jsonify({'error': 'Price must be a non-negative number'}), 400
 
     # Check for duplicate names after update item
-    for existing_item_id, existing_item in inventory.items():
+    new_name = request.json.get('name', item['name'])
+    for existing_item_id, existing_item in user_inventory.items():
         if existing_item_id != item_id and existing_item['name'] == new_name:
             return jsonify({'error': f"Item '{new_name}' already exists in your inventory", 'item_id': existing_item_id}), 409
 
     # Update supermarket fields with new data or keep existing data
-    item = inventory[item_id]
-    new_name = request.json.get('name', item['name'])
+    item = user_inventory[item_id]
     item['name'] = new_name
     item['description'] = request.json.get('description', item['description'])
-    item['quantity'] = request.json.get('quantity', item['quantity'])
-    item['price'] = request.json.get('price', item['price'])
+    item['quantity'] = new_quantity
+    item['price'] = new_price
     item['department'] = request.json.get('department', item['department'])
     item['location'] = request.json.get('location', item['location'])
     
@@ -230,13 +251,15 @@ def update_item(item_id):
 # Route to delete inventory item by ID (Admin Only)
 @app.route("/items/<int:item_id>", methods=["DELETE"])
 @require_token
+@require_admin
 def delete_item(item_id):
     if 'user' not in session:
         return jsonify({'error': 'Unauthorized access. Please log in.'}), 401
     
     username = session['user']
-    if item_id not in inventory:
+    user_inventory = inventory.get(username, {})
+    if item_id not in user_inventory:
         return jsonify({'error': 'Item not found'}), 404
     
-    del inventory[item_id]
+    del user_inventory[item_id]
     return jsonify({'message': 'Item deleted successfully'}), 200
