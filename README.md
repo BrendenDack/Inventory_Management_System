@@ -1,11 +1,11 @@
 # Inventory_Management_System
-Inventory management system backend development using python flask
+Inventory management system backend development using python and fastapi
 
-Using python flask, and a virtual environment
+Using python fastapi, and a virtual environment
 ```
 python -m venv venv;
 .\venv\Scripts\activate;
-pip install Flask, Flask-SQLAlchemy, mysql-connector-python, PyJWT, re;
+pip install fastapi, uvicorn, pydantic, sqlalchemy, pydantic[email], mysql-connector;
 ```
 
 create a file called 'secret_keys.py' containing the following
