@@ -63,6 +63,8 @@ async def require_token(request: Request):
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
+    
+    return payload
 
 @app.get("/protected")
 async def protected_route(request: Request, _: None = Depends(require_token)):
@@ -74,6 +76,18 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, secret_keys.encrypt_key, algorithm="HS256")
 
+def validate_password(password: str):  # Validate password strength
+    if len(password) < 8:
+        return "Password must be at least 8 characters long."
+    if not re.search(r'\d', password):
+        return "Password must contain at least one digit."
+    if not re.search(r'[A-Z]', password):
+        return "Password must contain at least one uppercase letter."
+    if not re.search(r'[a-z]', password):
+        return "Password must contain at least one lowercase letter."
+    if not re.search(r'[\W_]', password):
+        return "Password must contain at least one special character."
+    return None  # Return None if valid
 
 # ------------------- Database Models -------------------
 
@@ -96,15 +110,29 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(50), unique=True, nullable=False)
     password = Column(String(255), nullable=False) # Should be hashed
+    email = Column(String(255), nullable=False)
+    isAdmin = Column(bool, nullable=False)
 
 # ------------------- Pydantic Schemas -------------------
 
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     password: str = Field(..., min_length=8, max_length=255) # Should be hashed
+    email: str = Field(..., max_length=255)
 
     class Config:
         orm_mode = True
+
+class UserLogin(BaseModel):
+    username: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=8, max_length=255) # Should be hashed
+
+    class Config:
+        orm_mode = True
+
+class PromoteAdmin(BaseModel):
+    username: str = Field(..., min_length=3, max_length=50)
+    adminPassword: str = Field(..., min_length=8, max_length=255) # Should be hashed
 
 class UserOut(BaseModel):
     id: int
@@ -154,10 +182,15 @@ async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
     if existing_user:
         raise HTTPException(status_code=400, detail="Username already taken")
 
+    valid_status = validate_password(user.password)
+    if valid_status:
+        return HTTPException(status_code=400, detail=valid_status)
+
     # Create new user
     new_user = User(
         username=user.username,
-        password=user.password
+        password=user.password,
+        email = user.email
     )
     db.add(new_user)
     await db.commit()
@@ -169,7 +202,7 @@ from fastapi.responses import JSONResponse
 from fastapi.responses import Response
 
 @app.post("/login")
-async def login(user: UserCreate, db: AsyncSession = Depends(get_db)):
+async def login(user: UserLogin, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.username == user.username))
     db_user = result.scalar_one_or_none()
     
@@ -194,6 +227,20 @@ async def logout():
     response = JSONResponse(content={"message": "Logged out"})
     response.delete_cookie("inventory-access-token")
     return response
+
+@app.post("/PromoteAdmin")
+async def promote(user: PromoteAdmin, db : AsyncSession = Depends(get_db)):
+    
+    result = await db.execute(select(User).where(User.username == user.username))
+    db_user = result.scalar_one_or_none()
+    
+    if not db_user:
+        raise HTTPException(status_code=401, detail="No user found")
+    
+    if user.adminPassword != secret_keys.admin_password:
+        return HTTPException(status_code=401, detail="Invalid credentials")
+    
+
 
 
 # CRUD operations
