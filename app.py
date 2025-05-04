@@ -1,4 +1,5 @@
 # Most of initialization from professor's async example
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends, Request  # FastAPI core components
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr, Field  # For data validation and parsing
@@ -8,13 +9,11 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine  # Async engine and session from SQLAlchemy
 from sqlalchemy.ext.declarative import declarative_base  # Base class for SQLAlchemy models
 from sqlalchemy.orm import sessionmaker, declarative_base  # ORM tools
-from sqlalchemy import Column, Integer, String, Float, select  # Column types and SQL expressions
+from sqlalchemy import Column, Integer, String, Float, select, text  # Column types and SQL expressions
 import re  # Regular expressions module
 
 import secret_keys
 
-# ------------------- FastAPI Initialization -------------------
-app = FastAPI()  # Initialize FastAPI app instance
 
 # ------------------- Database Configuration -------------------
 DATABASE_URL = "mysql+aiomysql://"+secret_keys.db_username+":"+secret_keys.db_password+"@localhost/inventory_management" # Async MySQL DB URL
@@ -32,7 +31,22 @@ async def get_db():  # Dependency function to yield a DB session
     async with AsyncSessionLocal() as session:  # Context manager to open and close session
         yield session
 
-#for jwt
+# ------------------- FastAPI Initialization -------------------
+
+async def init_models():
+    async with engine.begin() as conn:
+        print("Creating tables if they don't exist...")
+        await conn.run_sync(Base.metadata.create_all)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_models()     
+    yield                   
+
+app = FastAPI(lifespan=lifespan)  # Initialize FastAPI app instance
+
+
+# ------------------- JWT -------------------
 async def require_token(request: Request):
     token = request.cookies.get("inventory-access-token")
 
@@ -59,6 +73,7 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=30))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, secret_keys.encrypt_key, algorithm="HS256")
+
 
 # ------------------- Database Models -------------------
 
@@ -202,14 +217,3 @@ async def read_items(
     result = await db.execute(select(Item))
     items = result.scalars().all()
     return items
-
-"""
-UNCOMMENT TO MAKE TABLES INITIALLY
- import asyncio 
-async def init_models():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-# Only run if this file is executed directly
-if __name__ == "__main__":
-    asyncio.run(init_models()) """
