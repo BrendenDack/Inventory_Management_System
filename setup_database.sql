@@ -1,1 +1,1 @@
-CREATE DATABASE -- Name Here
+CREATE DATABASE inventory_management
