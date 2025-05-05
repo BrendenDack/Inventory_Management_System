@@ -311,7 +311,7 @@ async def update_item(
     if item.name != None:
         check_name = await db.execute(select(Item).where(Item.name == item.name))
         db_name_item = check_name.scalar_one_or_none()
-        if db_name_item != db_item:
+        if (db_name_item != db_item) and db_name_item:
             raise HTTPException(status_code=401, detail="Item of that name already exists")
 
 
