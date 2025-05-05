@@ -319,9 +319,6 @@ async def delete_item(
 
     delete_result = await items.delete_one({"_id":ObjectId(item_id)})
 
-    if delete_result.deleted_count == 1:
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-
     return {"message":"Item deleted"}
 
 # Default CRUD operations
