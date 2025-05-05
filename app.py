@@ -2,14 +2,15 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends, Request  # FastAPI core components
 from fastapi.responses import JSONResponse
+from fastapi.responses import Response
 from pydantic import BaseModel, EmailStr, Field  # For data validation and parsing
-from typing import List
+from typing import List, Optional
 import jwt as jwt
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine  # Async engine and session from SQLAlchemy
 from sqlalchemy.ext.declarative import declarative_base  # Base class for SQLAlchemy models
 from sqlalchemy.orm import sessionmaker, declarative_base  # ORM tools
-from sqlalchemy import Column, Integer, String, Float, select, text  # Column types and SQL expressions
+from sqlalchemy import Column, Integer, String, Float, Boolean, select, text  # Column types and SQL expressions
 import re  # Regular expressions module
 
 import secret_keys
@@ -55,10 +56,10 @@ async def require_token(request: Request):
 
     try:
         payload = jwt.decode(token, secret_keys.encrypt_key, algorithms=["HS256"])
-        username = payload.get("sub")
-        if not username:
+
+        exp = payload.get("exp")
+        if not exp :
             raise HTTPException(status_code=401, detail="Invalid token")
-        request.state.user = username  # Optional: save user in request
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.JWTError:
@@ -67,8 +68,9 @@ async def require_token(request: Request):
     return payload
 
 @app.get("/protected")
-async def protected_route(request: Request, _: None = Depends(require_token)):
-    return {"message": f"Welcome {request.state.user}!"}
+async def protected_route(request: Request, jwt_payload = Depends(require_token)):
+    print(jwt_payload)
+    return {"message": f"Welcome {jwt_payload.get("username")}, You are a admin: {jwt_payload.get("isAdmin")}!"}
 
 def create_access_token(data: dict, expires_delta: timedelta = None):
     to_encode = data.copy()
@@ -111,7 +113,7 @@ class User(Base):
     username = Column(String(50), unique=True, nullable=False)
     password = Column(String(255), nullable=False) # Should be hashed
     email = Column(String(255), nullable=False)
-    isAdmin = Column(bool, nullable=False)
+    isAdmin = Column(Boolean, nullable=False)
 
 # ------------------- Pydantic Schemas -------------------
 
@@ -154,6 +156,19 @@ class ItemCreate(BaseModel):
     class Config:
         orm_mode = True
 
+class ItemUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=3, max_length=100)
+    description: Optional[str] = Field(default=None, max_length=250)
+    quantity: Optional[int] = Field(default=None)
+    price: Optional[float] = Field(default=None)
+    # We want this to be a List[str] that is constrained, but im not sure how to do that, most I could get is this site
+    # https://docs.python.org/3/library/typing.html#typing.Annotated
+    department: Optional[str] = Field(default=None, max_length=50)
+    location: Optional[str] = Field(default=None, max_length=50)
+
+    class Config:
+        orm_mode = True
+
 class ItemOut(BaseModel):
     id: int
     name: str
@@ -190,16 +205,13 @@ async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
     new_user = User(
         username=user.username,
         password=user.password,
-        email = user.email
+        email = user.email,
+        isAdmin = False
     )
     db.add(new_user)
     await db.commit()
     await db.refresh(new_user)
     return new_user
-
-from fastapi.responses import JSONResponse
-
-from fastapi.responses import Response
 
 @app.post("/login")
 async def login(user: UserLogin, db: AsyncSession = Depends(get_db)):
@@ -209,7 +221,7 @@ async def login(user: UserLogin, db: AsyncSession = Depends(get_db)):
     if not db_user or user.password != db_user.password:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    access_token = create_access_token(data={"sub": db_user.username})
+    access_token = create_access_token(data={"username": db_user.username, "isAdmin": db_user.isAdmin})
     
     response = JSONResponse(content={"message": "Login successful"})
     response.set_cookie(
@@ -240,26 +252,83 @@ async def promote(user: PromoteAdmin, db : AsyncSession = Depends(get_db)):
     if user.adminPassword != secret_keys.admin_password:
         return HTTPException(status_code=401, detail="Invalid credentials")
     
+    db_user.isAdmin = True
+    await db.commit()
+    await db.refresh(db_user)
+
+    return {"message": "Promoted User"}
 
 
 
-# CRUD operations
-@app.post("/additem", response_model=ItemOut)
+# Admin CRUD operations
+@app.post("/items")
 async def create_item(
     item: ItemCreate,
     db: AsyncSession = Depends(get_db),
-    _: None = Depends(require_token)  # This line enforces login
+    jwt_payload = Depends(require_token)  # This line enforces login
 ):
+    if not jwt_payload.get("isAdmin") == True:
+        return HTTPException(status_code=401, detail="Invalid credentials")
+
     new_item = Item(**item.dict())
     db.add(new_item)
     await db.commit()
     await db.refresh(new_item)
     return new_item
 
+@app.delete("/items/{item_id}")
+async def update_item(
+    item_id: int,
+    item: ItemUpdate,
+    db: AsyncSession = Depends(get_db),
+    jwt_payload = Depends(require_token)  # This line enforces login
+):
+    if not jwt_payload.get("isAdmin") == True:
+        return HTTPException(status_code=401, detail="Invalid credentials")
+
+    result = await db.execute(select(Item).where(Item.id == item_id))
+    db_item = result.scalar_one_or_none()
+
+    await db.delete(db_item)
+    await db.commit()
+    return {"message":"Item deleted"}
+
+# Default CRUD operations
+@app.put("/items/{item_id}")
+async def update_item(
+    item_id: int,
+    item: ItemUpdate,
+    db: AsyncSession = Depends(get_db),
+    jwt_payload = Depends(require_token)  # This line enforces login
+):
+    result = await db.execute(select(Item).where(Item.id == item_id))
+    db_item = result.scalar_one_or_none()
+    
+    if not db_item:
+        raise HTTPException(status_code=401, detail="No item found")
+
+    if item.name != None:
+        db_item.name = item.name
+    if item.description != None:
+        db_item.description = item.description
+    if item.quantity != None:
+        db_item.quantity = item.quantity
+    if item.price != None:
+        db_item.price = item.price
+    if item.department != None:
+        db_item.department = item.department
+    if item.location != None:
+        db_item.location = item.location
+
+    await db.commit()
+    await db.refresh(db_item)
+    return db_item
+
+
 @app.get("/items", response_model=List[ItemOut])
 async def read_items(
     db: AsyncSession = Depends(get_db),
-    _: None = Depends(require_token)  # Enforce login
+    jwt_payload = Depends(require_token)  # Enforce login
 ):
     result = await db.execute(select(Item))
     items = result.scalars().all()

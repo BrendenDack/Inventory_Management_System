@@ -8,7 +8,11 @@ python -m venv venv;
 pip install fastapi, uvicorn, pydantic, sqlalchemy, pydantic[email], mysql-connector;
 ```
 
-create a file called 'secret_keys.py' containing the following
+create a file called 'secret_keys.py' containing the following and modify the example values to your own values
 
-`db_password = "EXAMPLE_PASSWORD"`
-`encrypt_key = "EXAMPLE_KEY"`
+```
+db_username = "example"
+db_password = "example"
+encrypt_key = "example-secret"
+admin_password = "example"
+```
