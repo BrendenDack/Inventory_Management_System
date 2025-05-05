@@ -10,8 +10,9 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine  # Async engine and session from SQLAlchemy
 from sqlalchemy.ext.declarative import declarative_base  # Base class for SQLAlchemy models
 from sqlalchemy.orm import sessionmaker, declarative_base  # ORM tools
-from sqlalchemy import Column, Integer, String, Float, Boolean, select, text  # Column types and SQL expressions
+from sqlalchemy import Column, Integer, String, Float, Boolean, LargeBinary, select, text  # Column types and SQL expressions
 import re  # Regular expressions module
+import bcrypt
 
 import secret_keys
 
@@ -111,7 +112,8 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(50), unique=True, nullable=False)
-    password = Column(String(255), nullable=False) # Should be hashed
+    passwordsalt = Column(String(256), nullable=False)
+    hashedpassword = Column(String(512), nullable=False) # Should be hashed
     email = Column(String(255), nullable=False)
     isAdmin = Column(Boolean, nullable=False)
 
@@ -200,11 +202,15 @@ async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
     valid_status = validate_password(user.password)
     if valid_status:
         raise HTTPException(status_code=400, detail=valid_status)
+    
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(bytes(user.password, 'utf-8'), salt)
 
     # Create new user
     new_user = User(
         username=user.username,
-        password=user.password,
+        passwordsalt=salt,
+        hashedpassword=hashed,
         email = user.email,
         isAdmin = False
     )
@@ -218,7 +224,9 @@ async def login(user: UserLogin, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.username == user.username))
     db_user = result.scalar_one_or_none()
     
-    if not db_user or user.password != db_user.password:
+    hashedpass = bcrypt.hashpw(bytes(user.password, 'utf-8'),bytes(db_user.passwordsalt, 'utf-8'))
+    
+    if not db_user or hashedpass != bytes(db_user.hashedpassword, 'utf-8'):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     access_token = create_access_token(data={"username": db_user.username, "isAdmin": db_user.isAdmin})
