@@ -185,8 +185,8 @@ class ItemOut(BaseModel):
 
 
 @app.post("/")
-async def dummyfunc():
-    return {"message": "Hello dummy"}
+async def index():
+    return {"message": "There is no index page"}
 
 #login/register methods
 @app.post("/register", response_model=UserOut)
