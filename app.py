@@ -240,7 +240,7 @@ async def logout():
     response.delete_cookie("inventory-access-token")
     return response
 
-@app.post("/PromoteAdmin")
+@app.post("/promoteAdmin")
 async def promote(user: PromoteAdmin, db : AsyncSession = Depends(get_db)):
     
     result = await db.execute(select(User).where(User.username == user.username))
@@ -268,7 +268,7 @@ async def create_item(
     jwt_payload = Depends(require_token)  # This line enforces login
 ):
     if not jwt_payload.get("isAdmin") == True:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="Unauthorized Action")
 
     check_name = await db.execute(select(Item).where(Item.name == item.name))
     db_item = check_name.scalar_one_or_none()
@@ -288,7 +288,7 @@ async def delete_item(
     jwt_payload = Depends(require_token)  # This line enforces login
 ):
     if not jwt_payload.get("isAdmin") == True:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="Unauthorized Action")
 
     result = await db.execute(select(Item).where(Item.id == item_id))
     db_item = result.scalar_one_or_none()
