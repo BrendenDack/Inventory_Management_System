@@ -84,11 +84,11 @@ class PyObjectId(ObjectId):
         yield cls.validate
     
     @classmethod
-    def validate(cls, v):
+    def validate(cls, v, field=None):
         if not ObjectId.is_valid(v):
             raise ValueError('Invalid ObjectId')
         return ObjectId(v)
-    
+
     @classmethod
     def __get_pydantic_json_schema__(cls, core_schema: Any, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
         json_schema = handler(core_schema)
@@ -105,7 +105,7 @@ class PyObjectId(ObjectId):
 class Item(BaseModel):
     __tablename__ = "items"  # Name of the table
 
-    id: Optional[PyObjectId] = Field(default_factory=PyObjectId, alias="_id")
+    id: Optional[PyObjectId] = Field(default_factory=PyObjectId, alias="_id",)
     name: str = Field(...)
     description: str = Field(...)
     quantity: int = Field(...)
@@ -128,7 +128,11 @@ class User(BaseModel):
     hashedpassword: str = Field(...) # Should be hashed
     email: EmailStr = Field(...)
     isAdmin: bool = Field(...)
-    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
+    
+    class Config:
+        populate_by_name = True
+        arbitrary_types_allowed = True
+        json_encoders = {ObjectId: str}
 
 # ------------------- Pydantic Schemas -------------------
 
@@ -149,7 +153,7 @@ class UserLogin(BaseModel):
 
 class PromoteAdmin(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
-    adminPassword: str = Field(..., min_length=8, max_length=255) # Should be hashed
+    adminPassword: str = Field(...) # Should be hashed
 
 class UserOut(BaseModel):
     id: PyObjectId
@@ -198,13 +202,22 @@ class ItemOut(BaseModel):
     class Config:
         from_attributes = True
 
+# Helper function to convert MongoDB ObjectId to string
+def mongo_to_dict(item):
+    """Recursively convert ObjectId to string in the dictionary"""
+    if isinstance(item, dict):
+        return {k: mongo_to_dict(v) for k, v in item.items()}
+    elif isinstance(item, ObjectId):
+        return str(item)
+    return item
+
 
 @app.post("/")
 async def index():
     return {"message": "There is no index page"}
 
 #login/register methods
-@app.post("/register", response_model=UserOut)
+@app.post("/register")
 async def register(user: UserCreate = Body(...)):
     # Check if user exists
     existing_user = await users.find_one({"username":user.username})
@@ -227,13 +240,14 @@ async def register(user: UserCreate = Body(...)):
         isAdmin = False
     )
     await users.insert_one(new_user.model_dump(by_alias=True, exclude=["id"]))
-    return new_user
+
+    return {"message":"User registered"}
 
 @app.post("/login")
 async def login(user: UserLogin = Body(...)):
     result = await users.find_one({"username" : user.username})
     
-    if not result or not bcrypt.checkpw(user.password.encode('utf-8'), result['hashedpassword']):
+    if not result or not bcrypt.checkpw(user.password.encode('utf-8'), bytes(result['hashedpassword'], 'utf-8')):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     access_token = create_access_token(data={"username": result["username"], "isAdmin": result["isAdmin"]})
@@ -266,7 +280,11 @@ async def promote(user: PromoteAdmin = Body(...)):
     if user.adminPassword != secret_keys.admin_password:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
-    result.isAdmin = True
+    await users.find_one_and_update(
+        {"username" : user.username},
+        {"$set": {"isAdmin":True}},
+        return_document=ReturnDocument.AFTER
+    )
 
     return {"message": "Promoted User, please have the promoted user log in to refresh the token."}
 
@@ -286,7 +304,7 @@ async def create_item(
         raise HTTPException(status_code=401, detail="Item of that name already exists")
 
     new_item = Item(**item.dict())
-    await items.insert_one(new_item)
+    await items.insert_one(new_item.dict(by_alias=True))
     return new_item
 
 @app.delete("/items/{item_id}")
@@ -300,9 +318,6 @@ async def delete_item(
     result = await items.find_one({"_id" : ObjectId(item_id)})
 
     delete_result = await items.delete_one({"_id":ObjectId(item_id)})
-
-    if delete_result.deleted_count == 1:
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     return {"message":"Item deleted"}
 
@@ -318,25 +333,40 @@ async def update_item(
     if not result:
         raise HTTPException(status_code=404, detail="No item found")
 
-    update_data = {k: v for k, v in item.dict(exclude_unset=True).items() if v is not None}
-
-    if 'name' in update_data:
+    update_data = {}
+    if item.name != None:
+        update_data["name"] = item.name
+    if item.description != None:
+        update_data["description"] = item.description
+    if item.quantity != None:
+        update_data["quantity"] = item.quantity
+    if item.price != None:
+        update_data["price"] = item.price
+    if item.department != None:
+        update_data["department"] = item.department
+    if item.location != None:
+        update_data["location"] = item.location
+    
+    if update_data.get("name"):
         name_check = await items.find_one({"name": update_data['name']})
-        if name_check and name_check['_id'] != result['_id']:
+
+        if name_check and (name_check['_id'] != result['_id']):
             raise HTTPException(status_code=400, detail="Item with that name already exists")
 
-    updated_item = await items.find_one_and_update(
+    updated = await items.find_one_and_update(
         {"_id": ObjectId(item_id)},
         {"$set": update_data},
         return_document=ReturnDocument.AFTER
     )
+    
+    return mongo_to_dict(updated)
 
-    return updated_item
 
-
-@app.get("/items", response_model=List[ItemOut])
+@app.get("/items")
 async def read_items(
     jwt_payload = Depends(require_token)  # Enforce login
 ):
-    result = await items.find().to_list(1000)
-    return jsonable_encoder(result)
+    items_list = await items.find().to_list(length=200)
+    for item in items_list:
+        item["_id"] = str(item["_id"])
+    return items_list
