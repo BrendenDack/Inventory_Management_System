@@ -98,7 +98,7 @@ class Item(Base):
     __tablename__ = "items"  # Name of the table
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), nullable=False)
+    name = Column(String(100), unique=True, nullable=False)
     description = Column(String(250), nullable=False)
     quantity = Column(Integer, nullable=False)
     price = Column(Float, nullable=False)
@@ -256,7 +256,7 @@ async def promote(user: PromoteAdmin, db : AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(db_user)
 
-    return {"message": "Promoted User"}
+    return {"message": "Promoted User, please have the promoted user log in to refresh the token."}
 
 
 
