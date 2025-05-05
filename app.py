@@ -199,7 +199,7 @@ async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
 
     valid_status = validate_password(user.password)
     if valid_status:
-        return HTTPException(status_code=400, detail=valid_status)
+        raise HTTPException(status_code=400, detail=valid_status)
 
     # Create new user
     new_user = User(
@@ -250,7 +250,7 @@ async def promote(user: PromoteAdmin, db : AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=401, detail="No user found")
     
     if user.adminPassword != secret_keys.admin_password:
-        return HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="Invalid credentials")
     
     db_user.isAdmin = True
     await db.commit()
@@ -268,7 +268,7 @@ async def create_item(
     jwt_payload = Depends(require_token)  # This line enforces login
 ):
     if not jwt_payload.get("isAdmin") == True:
-        return HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
     new_item = Item(**item.dict())
     db.add(new_item)
@@ -284,7 +284,7 @@ async def update_item(
     jwt_payload = Depends(require_token)  # This line enforces login
 ):
     if not jwt_payload.get("isAdmin") == True:
-        return HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
     result = await db.execute(select(Item).where(Item.id == item_id))
     db_item = result.scalar_one_or_none()
