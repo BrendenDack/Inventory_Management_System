@@ -270,6 +270,11 @@ async def create_item(
     if not jwt_payload.get("isAdmin") == True:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
+    check_name = await db.execute(select(Item).where(Item.name == item.name))
+    db_item = check_name.scalar_one_or_none()
+    if db_item:
+        raise HTTPException(status_code=401, detail="Item of that name already exists")
+
     new_item = Item(**item.dict())
     db.add(new_item)
     await db.commit()
@@ -277,9 +282,8 @@ async def create_item(
     return new_item
 
 @app.delete("/items/{item_id}")
-async def update_item(
+async def delete_item(
     item_id: int,
-    item: ItemUpdate,
     db: AsyncSession = Depends(get_db),
     jwt_payload = Depends(require_token)  # This line enforces login
 ):
@@ -304,6 +308,13 @@ async def update_item(
     result = await db.execute(select(Item).where(Item.id == item_id))
     db_item = result.scalar_one_or_none()
     
+    if item.name != None:
+        check_name = await db.execute(select(Item).where(Item.name == item.name))
+        db_name_item = check_name.scalar_one_or_none()
+        if db_name_item != db_item:
+            raise HTTPException(status_code=401, detail="Item of that name already exists")
+
+
     if not db_item:
         raise HTTPException(status_code=401, detail="No item found")
 
