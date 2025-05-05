@@ -1,275 +1,354 @@
-#Flask and related functions
-from flask import Flask, request, jsonify, session
-# For Token Authentication
+# Most of initialization from professor's async example
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, Depends, Request  # FastAPI core components
+from fastapi.responses import JSONResponse
+from fastapi.responses import Response
+from pydantic import BaseModel, EmailStr, Field  # For data validation and parsing
+from typing import List, Optional
 import jwt as jwt
 from datetime import datetime, timedelta, timezone
-from functools import wraps
-import re
-# For password hashing
-from werkzeug.security import generate_password_hash, check_password_hash
-# Secret variables not pushed to github
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine  # Async engine and session from SQLAlchemy
+from sqlalchemy.ext.declarative import declarative_base  # Base class for SQLAlchemy models
+from sqlalchemy.orm import sessionmaker, declarative_base  # ORM tools
+from sqlalchemy import Column, Integer, String, Float, Boolean, LargeBinary, select, text  # Column types and SQL expressions
+import re  # Regular expressions module
+import bcrypt
+
 import secret_keys
 
-app = Flask(__name__)
-# Session configuration
-app.config['SECRET_KEY'] = secret_keys.encrypt_key
-app.config['SESSION_COOKIE_NAME'] = 'inventory_management_session'  # Name of session cookie
-app.config['SESSION_PERMANENT'] = False  # Session will not be permanent
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)  # Session expires after 30 minutes
-app.config['SESSION_COOKIE_HTTPONLY'] = True  # Prevents JavaScript access to session cookie
-app.config['SESSION_COOKIE_SECURE'] = False  # Should be True in production for HTTPS security
 
-users = {}  # Dictionary to store user credentials (username: password)
-admins = { "bingbong":"password!23" } # Dictionary to store admin credentials (username: password)
-inventory = {} # Stores inventory per user: {username: {item_id: item_data}}
+# ------------------- Database Configuration -------------------
+DATABASE_URL = "mysql+aiomysql://"+secret_keys.db_username+":"+secret_keys.db_password+"@localhost/inventory_management" # Async MySQL DB URL
 
-# Helper function to determine if token is valid
-def require_token(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        
-        token = request.cookies.get("inventory-access-token")
-        if not token:
-            return jsonify({"message": "Missing Token"}), 401  # Unauthorized if no token is provided
+engine = create_async_engine(DATABASE_URL, echo=True)  # Create async engine
 
-        try:
-            # Decode given token using the secret key
-            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
-            session['user'] = data['username'] # Extract user info
-        except:
-            return jsonify({'message' : "Invalid Token"}), 401 # Unauthorized because bad token
-        
-        return f(*args, **kwargs)
+# Create an async session class
+AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+# Base class for ORM models
+Base = declarative_base()
+
+# Dependency to get async DB session
+async def get_db():  # Dependency function to yield a DB session
+    async with AsyncSessionLocal() as session:  # Context manager to open and close session
+        yield session
+
+# ------------------- FastAPI Initialization -------------------
+
+async def init_models():
+    async with engine.begin() as conn:
+        print("Creating tables if they don't exist...")
+        await conn.run_sync(Base.metadata.create_all)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_models()     
+    yield                   
+
+app = FastAPI(lifespan=lifespan)  # Initialize FastAPI app instance
+
+
+# ------------------- JWT -------------------
+async def require_token(request: Request):
+    token = request.cookies.get("inventory-access-token")
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing token")
+
+    try:
+        payload = jwt.decode(token, secret_keys.encrypt_key, algorithms=["HS256"])
+
+        exp = payload.get("exp")
+        if not exp :
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
     
-    return decorated
+    return payload
 
-# Middleware to restrict access to admins only
-def require_admin(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'user' not in session or session['user'] not in admins:
-            return jsonify({'error': 'Admins only'}), 403
-        return f(*args, **kwargs)
-    return decorated_function
+@app.get("/protected")
+async def protected_route(request: Request, jwt_payload = Depends(require_token)):
+    print(jwt_payload)
+    return {"message": f"Welcome {jwt_payload.get("username")}, You are a admin: {jwt_payload.get("isAdmin")}!"}
 
-@app.route("/register", methods=["POST"])
-def register():
-    if not request.json or not 'username' in request.json or not 'password' in request.json:
-        return jsonify({"message" : "Missing username or password"}), 400
-    
-    if not isinstance(request.json['username'], str) or not isinstance(request.json['password'], str):
-        return jsonify({"message" : "Username and password must be strings"}), 400
+def create_access_token(data: dict, expires_delta: timedelta = None):
+    to_encode = data.copy()
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=30))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, secret_keys.encrypt_key, algorithm="HS256")
 
-    username = request.json['username']
-    password = request.json['password']
-    email = request.json.get('email', '')
+def validate_password(password: str):  # Validate password strength
+    if len(password) < 8:
+        return "Password must be at least 8 characters long."
+    if not re.search(r'\d', password):
+        return "Password must contain at least one digit."
+    if not re.search(r'[A-Z]', password):
+        return "Password must contain at least one uppercase letter."
+    if not re.search(r'[a-z]', password):
+        return "Password must contain at least one lowercase letter."
+    if not re.search(r'[\W_]', password):
+        return "Password must contain at least one special character."
+    return None  # Return None if valid
 
-    if username in admins:
-        return jsonify({"message" : "User already exists"}), 400
+# ------------------- Database Models -------------------
 
-    if username in users:
-        return jsonify({"message" : "User already exists"}), 400
-    
-    if len(password) < 8 or not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
-        return jsonify({"message" : "Password must be at least 8 characters long and contain at least one special character"}), 400
-    
-    if not email or not re.match(r"[^@]+@[^@]+\.[^@]+", email):
-        return jsonify({"message": "Valid email is required"}), 400
-    
-    # Store user credentials in the dictionary
-    hashed_pw = generate_password_hash(password)
-    users[username] = {'password': hashed_pw, 'email': email}
-    return jsonify({"message": "User registered successfully"}), 201
+# Item model
+class Item(Base):
+    __tablename__ = "items"  # Name of the table
 
-# Login
-@app.route("/login", methods=["POST"])
-def login():
-    
-    if not request.json or 'username' not in request.json or 'password' not in request.json:
-        return jsonify({'error': 'Username and password are required'}), 400
-    
-    if not isinstance(request.json['username'], str) or not isinstance(request.json['password'], str):
-        return jsonify({"message" : "Username and password must be strings"}), 400
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), unique=True, nullable=False)
+    description = Column(String(250), nullable=False)
+    quantity = Column(Integer, nullable=False)
+    price = Column(Float, nullable=False)
+    department = Column(String(50), nullable=False)
+    location = Column(String(50), nullable=False)
 
-    username = request.json['username']
-    password = request.json['password']
+# User model
+class User(Base):
+    __tablename__ = "users"
 
-    if admins.get(username) == password: # Check if user is admin
-        token = jwt.encode({'username': username, 'exp': datetime.now(timezone.utc) + timedelta(minutes=30)}, app.config['SECRET_KEY'], algorithm='HS256')
-        
-        response = jsonify({'message': 'Admin Login successful', 'token': token})
-        response.set_cookie('inventory-access-token', token, httponly=True, max_age=1800)
-        session['user'] = username
-        return response, 200
-        
-    elif username not in users or not check_password_hash(users[username]['password'], password):
-        return jsonify({'error': 'Invalid username or password'}), 401
-    
-    session['user'] = username # Store user in session
-    response = jsonify({'message': 'Login successful'})
-    response.set_cookie('username', username, httponly=True, max_age = 1800) # Set cookie with username
-    return response, 200
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(50), unique=True, nullable=False)
+    passwordsalt = Column(String(256), nullable=False)
+    hashedpassword = Column(String(512), nullable=False) # Should be hashed
+    email = Column(String(255), nullable=False)
+    isAdmin = Column(Boolean, nullable=False)
 
-# Logout 
-@app.route("/logout", methods=["POST"])
-def logout():
-    session.pop('user', None)
-    response = jsonify({'message': 'Logout successful'})
-    response.set_cookie('username', '', expires=0) # clear cookie
-    response.set_cookie('inventory-access-token', '', expires=0) # clear admin credentials when logging out
-    return response, 200
+# ------------------- Pydantic Schemas -------------------
 
-# Middleware to protect routes, allowing only logged-in users
-@app.before_request
-def require_login():
-    allowed_routes = ['login', 'register']  # Routes that don't require authentication
-    if request.endpoint not in allowed_routes and 'user' not in session:
-        return jsonify({'error': 'Unauthorized access. Please log in to view this resource.'}), 401
+class UserCreate(BaseModel):
+    username: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=8, max_length=255) # Should be hashed
+    email: str = Field(..., max_length=255)
 
-# Protected route (requires valid JWT token)
-# Template for creating CRUD routes with JWT authentication Protection
-@app.route('/admin', methods=['GET'])
-@require_token
-def protected_route():
-    # The current_user is passed after token verification
-    return jsonify({'message': f"Hello, {session['user']}! Welcome to the Admin inventory management system."})
+    class Config:
+        orm_mode = True
 
-@app.route('/user', methods=['GET'])
-def user():
-    # The current_user is passed after token verification
-    return jsonify({'message': f"Hello, {session['user']}! Welcome to the Admin inventory management system."})
+class UserLogin(BaseModel):
+    username: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=8, max_length=255) # Should be hashed
 
-# Helper function to generate unique item IDs for each user's inventory
-def generate_item_id():
-    return max(inventory.keys(), default=0) + 1
+    class Config:
+        orm_mode = True
 
-# Route to create (POST) inventory item (Admin Only)
-@app.route('/items', methods=['POST'])
-@require_token
-@require_admin
-def create_items():
-    if 'user' not in session:
-        return jsonify({'error': 'Unauthorized access. Please login.'}), 401
-    
-    username = session['user']
-    
-    # Validate required fields in JSON request
-    required_fields = ['name', 'description', 'quantity', 'price', 'department', 'location']
-    if not request.json or not all(field in request.json for field in required_fields):
-        return jsonify({'error:': 'Missing required fields'}), 400
-    
-    # Extract the item data 
-    item_data = {
-        'name': request.json['name'],
-        'description': request.json['description'],
-        'quantity': request.json['quantity'],
-        'price': request.json['price'],
-        'department': request.json['department'],
-        'location': request.json['location'],
-    }
-    
-    # Validate the item name, description, department, and location
-    if not isinstance(item_data['name'], str):
-        return jsonify({'error': 'Item name must be a string'}), 400
-    if not isinstance(item_data['description'], str):
-        return jsonify({'error': 'Item description must be a string'}), 400
-    if not isinstance(item_data['department'], str):
-        return jsonify({'error': 'Item department must be a string'}), 400
-    if not isinstance(item_data['location'], str):
-        return jsonify({'error': 'Item location must be a string'}), 400
+class PromoteAdmin(BaseModel):
+    username: str = Field(..., min_length=3, max_length=50)
+    adminPassword: str = Field(..., min_length=8, max_length=255) # Should be hashed
 
-    # Validate the quantity and price
-    if not isinstance(item_data['quantity'], int) or item_data['quantity'] < 0:
-        return jsonify({'error': 'Quantity must be a non-negative integer'}), 400
-    if not isinstance(item_data['price'], (int, float)) or item_data['price'] < 0:
-        return jsonify({'error': 'Price must be a non-negative number'}), 400
-    
-    # Check if item already exist in user's inventory
-    for existing_item_id, existing_item in inventory.items():
-        if existing_item['name'] == item_data['name']:
-            return jsonify({'error': f"Item '{item_data['name']}' already exists in your inventory", 
-                            'item_id': existing_item_id}), 409
-    
-    # Generate item ID and store the item
-    # Add new item to inventory
-    item_id = generate_item_id()
-    inventory[item_id] = item_data
-    
-    return jsonify({'message': 'Item created successfully', 'item_id': item_id}), 201
+class UserOut(BaseModel):
+    id: int
+    username: str
 
-# Route to read (GET) all inventory items 
-@app.route("/items", methods=["GET"])
-def get_items():
-    if 'user' not in session:
-        return jsonify({'error': 'Unauthorized access. Please log in.'}), 401
-    
-    username = session['user']
-    return jsonify(inventory), 200
+    class Config:
+        orm_mode = True
 
-# Route to read (GET) single inventory item by ID (user)
-@app.route("/items/<int:item_id>", methods=["GET"])
-def get_item(item_id):
-    if 'user' not in session:
-        return jsonify({'error': 'Unauthorized access. Please log in.'}), 401
-    
-    username = session['user']
-    item = inventory.get(item_id)
-    if not item:
-        return jsonify({'error': 'Item not found'}), 404
-    
-    return jsonify({item_id: item}), 200
+class ItemCreate(BaseModel):
+    name: str = Field(..., min_length=3, max_length=100)
+    description: str = Field(..., max_length=250)
+    quantity: int
+    price: float
+    # We want this to be a List[str] that is constrained, but im not sure how to do that, most I could get is this site
+    # https://docs.python.org/3/library/typing.html#typing.Annotated
+    department: str = Field(..., max_length=50)
+    location: str = Field(..., max_length=50)
 
-# Route to update (PUT) inventory item by ID (user)
-@app.route("/items/<int:item_id>", methods=["PUT"])
-def update_item(item_id):
-    if 'user' not in session:
-        return jsonify({'error': 'Unauthorized access. Please login.'}), 401
-    
-    username = session['user']
-    if item_id not in inventory:
-        return jsonify({'error': 'Item not found'}), 404
-    
-    item = inventory[item_id]
-    if not request.json:
-        return jsonify({'error': 'No data provided'}), 400
-    
-    # Validate updated quantity and price
-    new_quantity = request.json.get('quantity', item['quantity'])
-    new_price = request.json.get('price', item['price'])
+    class Config:
+        orm_mode = True
 
-    if not isinstance(new_quantity, int) or new_quantity < 0:
-       return jsonify({'error': 'Quantity must be a non-negative integer'}), 400
-    if not isinstance(new_price, (int, float)) or new_price < 0:
-       return jsonify({'error': 'Price must be a non-negative number'}), 400
+class ItemUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=3, max_length=100)
+    description: Optional[str] = Field(default=None, max_length=250)
+    quantity: Optional[int] = Field(default=None)
+    price: Optional[float] = Field(default=None)
+    # We want this to be a List[str] that is constrained, but im not sure how to do that, most I could get is this site
+    # https://docs.python.org/3/library/typing.html#typing.Annotated
+    department: Optional[str] = Field(default=None, max_length=50)
+    location: Optional[str] = Field(default=None, max_length=50)
 
-    # Check for duplicate names after update item
-    new_name = request.json.get('name', item['name'])
-    for existing_item_id, existing_item in inventory.items():
-        if existing_item_id != item_id and existing_item['name'] == new_name:
-            return jsonify({'error': f"Item '{new_name}' already exists in your inventory", 'item_id': existing_item_id}), 409
+    class Config:
+        orm_mode = True
 
-    # Update supermarket fields with new data or keep existing data
-    item = inventory[item_id]
-    item['name'] = new_name
-    item['description'] = request.json.get('description', item['description'])
-    item['quantity'] = new_quantity
-    item['price'] = new_price
-    item['department'] = request.json.get('department', item['department'])
-    item['location'] = request.json.get('location', item['location'])
-    
-    return jsonify({'message': 'Item updated successfully'}), 200
+class ItemOut(BaseModel):
+    id: int
+    name: str
+    description: str
+    quantity: int
+    price: float
+    # We want this to be a List[str] that is constrained, but im not sure how to do that, most I could get is this site
+    # https://docs.python.org/3/library/typing.html#typing.Annotated
+    department: str
+    location: str
 
-# Route to delete inventory item by ID (Admin Only)
-@app.route("/items/<int:item_id>", methods=["DELETE"])
-@require_token
-@require_admin
-def delete_item(item_id):
-    if 'user' not in session:
-        return jsonify({'error': 'Unauthorized access. Please log in.'}), 401
+    class Config:
+        orm_mode = True
+
+
+@app.post("/")
+async def index():
+    return {"message": "There is no index page"}
+
+#login/register methods
+@app.post("/register", response_model=UserOut)
+async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
+    # Check if user exists
+    result = await db.execute(select(User).where(User.username == user.username))
+    existing_user = result.scalar_one_or_none()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Username already taken")
+
+    valid_status = validate_password(user.password)
+    if valid_status:
+        raise HTTPException(status_code=400, detail=valid_status)
     
-    username = session['user']
-    if item_id not in inventory:
-        return jsonify({'error': 'Item not found'}), 404
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(bytes(user.password, 'utf-8'), salt)
+
+    # Create new user
+    new_user = User(
+        username=user.username,
+        passwordsalt=salt,
+        hashedpassword=hashed,
+        email = user.email,
+        isAdmin = False
+    )
+    db.add(new_user)
+    await db.commit()
+    await db.refresh(new_user)
+    return new_user
+
+@app.post("/login")
+async def login(user: UserLogin, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.username == user.username))
+    db_user = result.scalar_one_or_none()
     
-    del inventory[item_id]
-    return jsonify({'message': 'Item deleted successfully'}), 200
+    hashedpass = bcrypt.hashpw(bytes(user.password, 'utf-8'),bytes(db_user.passwordsalt, 'utf-8'))
+    
+    if not db_user or hashedpass != bytes(db_user.hashedpassword, 'utf-8'):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    access_token = create_access_token(data={"username": db_user.username, "isAdmin": db_user.isAdmin})
+    
+    response = JSONResponse(content={"message": "Login successful"})
+    response.set_cookie(
+        key="inventory-access-token",
+        value=access_token,
+        httponly=True,
+        max_age=1800,  # 30 minutes
+        secure=False,  # Set to True in production with HTTPS
+        samesite="lax"
+    )
+    return response
+
+@app.post("/logout")
+async def logout():
+    response = JSONResponse(content={"message": "Logged out"})
+    response.delete_cookie("inventory-access-token")
+    return response
+
+@app.post("/promoteAdmin")
+async def promote(user: PromoteAdmin, db : AsyncSession = Depends(get_db)):
+    
+    result = await db.execute(select(User).where(User.username == user.username))
+    db_user = result.scalar_one_or_none()
+    
+    if not db_user:
+        raise HTTPException(status_code=401, detail="No user found")
+    
+    if user.adminPassword != secret_keys.admin_password:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    db_user.isAdmin = True
+    await db.commit()
+    await db.refresh(db_user)
+
+    return {"message": "Promoted User, please have the promoted user log in to refresh the token."}
+
+
+
+# Admin CRUD operations
+@app.post("/items")
+async def create_item(
+    item: ItemCreate,
+    db: AsyncSession = Depends(get_db),
+    jwt_payload = Depends(require_token)  # This line enforces login
+):
+    if not jwt_payload.get("isAdmin") == True:
+        raise HTTPException(status_code=401, detail="Unauthorized Action")
+
+    check_name = await db.execute(select(Item).where(Item.name == item.name))
+    db_item = check_name.scalar_one_or_none()
+    if db_item:
+        raise HTTPException(status_code=401, detail="Item of that name already exists")
+
+    new_item = Item(**item.dict())
+    db.add(new_item)
+    await db.commit()
+    await db.refresh(new_item)
+    return new_item
+
+@app.delete("/items/{item_id}")
+async def delete_item(
+    item_id: int,
+    db: AsyncSession = Depends(get_db),
+    jwt_payload = Depends(require_token)  # This line enforces login
+):
+    if not jwt_payload.get("isAdmin") == True:
+        raise HTTPException(status_code=401, detail="Unauthorized Action")
+
+    result = await db.execute(select(Item).where(Item.id == item_id))
+    db_item = result.scalar_one_or_none()
+
+    await db.delete(db_item)
+    await db.commit()
+    return {"message":"Item deleted"}
+
+# Default CRUD operations
+@app.put("/items/{item_id}")
+async def update_item(
+    item_id: int,
+    item: ItemUpdate,
+    db: AsyncSession = Depends(get_db),
+    jwt_payload = Depends(require_token)  # This line enforces login
+):
+    result = await db.execute(select(Item).where(Item.id == item_id))
+    db_item = result.scalar_one_or_none()
+    
+    if item.name != None:
+        check_name = await db.execute(select(Item).where(Item.name == item.name))
+        db_name_item = check_name.scalar_one_or_none()
+        if (db_name_item != db_item) and db_name_item:
+            raise HTTPException(status_code=401, detail="Item of that name already exists")
+
+
+    if not db_item:
+        raise HTTPException(status_code=401, detail="No item found")
+
+    if item.name != None:
+        db_item.name = item.name
+    if item.description != None:
+        db_item.description = item.description
+    if item.quantity != None:
+        db_item.quantity = item.quantity
+    if item.price != None:
+        db_item.price = item.price
+    if item.department != None:
+        db_item.department = item.department
+    if item.location != None:
+        db_item.location = item.location
+
+    await db.commit()
+    await db.refresh(db_item)
+    return db_item
+
+
+@app.get("/items", response_model=List[ItemOut])
+async def read_items(
+    db: AsyncSession = Depends(get_db),
+    jwt_payload = Depends(require_token)  # Enforce login
+):
+    result = await db.execute(select(Item))
+    items = result.scalars().all()
+    return items
