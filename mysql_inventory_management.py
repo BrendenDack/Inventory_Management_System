@@ -178,8 +178,8 @@ class UserOut(BaseModel):
 class ItemCreate(BaseModel):
     name: str = Field(..., min_length=3, max_length=100)
     description: str = Field(..., max_length=250) 
-    quantity: int 
-    price: float 
+    quantity: int = Field(ge=0)
+    price: float = Field(ge = 0)
     department: str = Field(..., max_length=50)
     location: str = Field(..., max_length=50)
 
@@ -190,8 +190,8 @@ class ItemCreate(BaseModel):
 class ItemUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=3, max_length=100)
     description: Optional[str] = Field(default=None, max_length=250)
-    quantity: Optional[int] = Field(default=None)
-    price: Optional[float] = Field(default=None)
+    quantity: Optional[int] = Field(ge=0, default=None)
+    price: Optional[float] = Field(ge=0, default=None)
     department: Optional[str] = Field(default=None, max_length=50)
     location: Optional[str] = Field(default=None, max_length=50)
 
